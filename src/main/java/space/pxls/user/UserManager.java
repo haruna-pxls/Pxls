@@ -2,10 +2,10 @@ package space.pxls.user;
 
 import space.pxls.App;
 import space.pxls.data.DBUser;
-import space.pxls.data.DBUserBanReason;
+import space.pxls.util.Util;
 
 import java.util.Map;
-import java.util.Random;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class UserManager {
@@ -18,15 +18,13 @@ public class UserManager {
 
     }
 
-    private static String generateRandom() {
-        String charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-        Random rand = new Random();
-        StringBuilder res = new StringBuilder();
-        for (int i = 0; i <= 32; i++) {
-            int randIndex = rand.nextInt(charset.length());
-            res.append(charset.charAt(randIndex));
+    public void reload() {
+        for (User u : userCache.values()) {
+            u.reloadFromDatabase();
         }
-        return res.toString();
+        for (User u : App.getServer().getAuthedUsers().values()) {
+            u.reloadFromDatabase();
+        }
     }
 
     private void addUserToken(String token, User user) {
@@ -41,6 +39,7 @@ public class UserManager {
 
     public User getByToken(String token) {
         User u = usersByToken.get(token);
+        App.getDatabase().updateSession(token);
         if (u != null) {
             return u;
         }
@@ -48,7 +47,6 @@ public class UserManager {
         if (u == null) {
             return null;
         }
-        App.getDatabase().updateSession(token);
         usersByToken.put(token, u); // insert it in the hashmap for quicker access
         return u;
     }
@@ -57,21 +55,26 @@ public class UserManager {
         return getByDB(App.getDatabase().getUserByLogin(login));
     }
 
-    private User getByDB(DBUser user) {
-        if (user == null) return null;
-        return userCache.computeIfAbsent(user.id, (k) -> new User(user.id, user.username, user.login, user.lastPlaceTime, user.role, user.banExpiry));
+    public User getByID(int uid) {
+        return getByDB(App.getDatabase().getUserByID(uid));
+    }
+
+    private User getByDB(Optional<DBUser> optionalUser) {
+        if (!optionalUser.isPresent()) return null;
+        DBUser user = optionalUser.get();
+        return userCache.computeIfAbsent(user.id, (k) -> new User(user.id, user.stacked, user.username, user.login, user.cooldownExpiry, user.role, user.banExpiry, user.isPermaChatbanned, user.chatbanExpiry, user.chatbanReason, user.chatNameColor));
     }
 
     public String logIn(User user, String ip) {
-        Integer uid = new Integer(user.getId());
-        String token = uid.toString()+"|"+generateRandom();
+        Integer uid = user.getId();
+        String token = uid.toString()+"|"+ Util.generateRandomToken();
         addUserToken(token, user);
         App.getDatabase().updateUserIP(user, ip);
         return token;
     }
 
     public String generateUserCreationToken(String login) {
-        String token = generateRandom();
+        String token = Util.generateRandomToken();
         userSignupTokens.put(token, login);
         return token;
     }
@@ -84,8 +87,8 @@ public class UserManager {
         String login = userSignupTokens.get(token);
         if (login == null) return null;
 
-        if (App.getDatabase().getUserByName(name) == null) {
-            DBUser user = App.getDatabase().createUser(name, login, ip);
+        if (!App.getDatabase().getUserByName(name).isPresent()) {
+            Optional<DBUser> user = App.getDatabase().createUser(name, login, ip);
             userSignupTokens.remove(token);
             return getByDB(user);
         }
@@ -100,56 +103,7 @@ public class UserManager {
         removeUserToken(value);
     }
 
-    public void shadowBanUser(User user, String reason, int rollback_time) {
-        App.getDatabase().updateBanReason(user, reason);
-        App.getDatabase().setUserRole(user, Role.SHADOWBANNED);
-        user.setRole(Role.SHADOWBANNED);
-        App.rollbackAfterBan(user, false, rollback_time);
-    }
-
-    public void shadowBanUser(User user, String reason) {
-        shadowBanUser(user, reason, 24*3600);
-    }
-
-    public void shadowBanUser(User user) {
-        shadowBanUser(user, "");
-    }
-
-    public void banUser(User user, long timeFromNowSeconds, String reason, int rollback_time) {
-        App.getDatabase().updateBan(user, timeFromNowSeconds, reason);
-        user.setBanExpiryTime(timeFromNowSeconds * 1000 + System.currentTimeMillis());
-        if (timeFromNowSeconds > 0) {
-            App.rollbackAfterBan(user, false, rollback_time);
-        }
-    }
-
-    public void banUser(User user, long timeFromNowSeconds, String reason) {
-        banUser(user, timeFromNowSeconds, reason, 24*3600);
-    }
-
-    public void banUser(User user, long timeFromNowSeconds) {
-        banUser(user, timeFromNowSeconds, "", 0);
-    }
-
-    public void unbanUser(User user) {
-        banUser(user, 0);
-        App.getDatabase().setUserRole(user, Role.USER);
-        user.setRole(Role.USER);
-        App.rollbackAfterBan(user, true, 0);
-    }
-
-    public void permaBanUser(User user, String reason, int rollback_time) {
-        App.getDatabase().updateBanReason(user, reason);
-        App.getDatabase().setUserRole(user, Role.BANNED);
-        user.setRole(Role.BANNED);
-        App.rollbackAfterBan(user, false, rollback_time);
-    }
-
-    public void permaBanUser(User user, String reason) {
-        permaBanUser(user, reason, 24*3600);
-    }
-
-    public Map getAllUsersByToken() {
+    public Map<String, User> getAllUsersByToken() {
         return usersByToken;
     }
 }

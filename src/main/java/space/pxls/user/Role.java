@@ -5,7 +5,9 @@ public enum Role {
     BANNED,
     GUEST,
     USER,
+    TRIALMOD,
     MODERATOR,
+    DEVELOPER,
     ADMIN;
 
     public boolean lessThan(Role other) {

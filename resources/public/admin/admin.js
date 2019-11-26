@@ -10,60 +10,79 @@
             }).addClass("button").text(s);
         },
         sendAlert = function(username) {
-            return $("<div>").append(
-                $("<input>").attr("placeholder", "Send alert...").keydown(function (evt) {
-                    if (evt.which === 13) {
-                        admin.socket.send({
-                            type: "admin_message",
-                            username: username,
-                            message: this.value
-                        });
-                        this.value = "";
-                    }
-                    evt.stopPropagation();
-                })
-            )
+            if (admin.user.getRole() === "TRIALMOD") return "";
+            return $("<input>").attr("placeholder", "Send alert...").keydown(function (evt) {
+				if (evt.which === 13) {
+					admin.socket.send({
+						type: "admin_message",
+						username: username,
+						message: this.value
+					});
+					this.value = "";
+				}
+				evt.stopPropagation();
+			});
+        },
+        genUserInfoLink = function(username) {
+            const userInfoURL = "https://admin." + location.host + "/userinfo/" + username;
+            return $("<a>").text(username).attr("href", userInfoURL).attr("target", "_blank");
         },
         ban = (function() {
             var self = {
                 elements: {
-                    prompt: $("<div>").addClass("message admin-prompt")
+                    prompt: $("#prompt")
                 },
                 init: function () {
-                    self.elements.prompt.hide().appendTo(document.body);
                 },
                 deinit: function () {
-                    self.elements.prompt.remove();
                 },
                 prompt: function (s, time, fn) {
-                    var time_input = $("<input>").attr("type", "number").addClass("admin-bannumber").val(time);
+                    var time_input = $("<input>").attr("type", "number").attr("step", "any").addClass("admin-bannumber").val(time);
                     self.elements.prompt.empty().append(
-                        $("<p>").addClass("text").text(s),
-                        $("<input>").addClass("prompt").attr("type","text").css("width", "100%").keydown(function (evt) {
-                            if (evt.which === 13) {
-                                fn(self.elements.prompt.find(".prompt").val());
-                                self.elements.prompt.fadeOut(200);
-                            }
+                        $("<p>").addClass("text").css({
+                            fontWeight: 800,
+                            marginTop: 0
+                        }).text(s),
+                        $("<select>").append(
+                            $("<option>").text("Rule #1: Hateful/derogatory speech or symbols"),
+                            $("<option>").text("Rule #2: Nudity, genitalia, or non-PG-13 content"),
+                            $("<option>").text("Rule #3: Multi-account"),
+                            $("<option>").text("Rule #4: Botting"),
+                            $("<option>").attr("value", "other").text("Other (specify below)")
+                        ).css({
+                            width: "100%",
+                            "margin-bottom": "1em"
+                        }),
+                        $("<textarea>").attr("placeholder", "Additional information (if applicable)").css({
+                            width: '100%',
+                            height: '5em'
+                        }).keydown(function (evt) {
                             evt.stopPropagation();
                         }),
                         $("<div>").addClass("text").append(
                             "Revert pixels of the last ", time_input, " hours"
                         ),
-                        genButton("Cancel").css({
-                            position: "fixed",
-                            bottom: 20,
-                            left: 30,
-                        }).click(function () {
-                            self.elements.prompt.fadeOut(200);
-                        }),
-                        genButton("OK").css({
-                            position: "fixed",
-                            bottom: 20,
-                            right: 30
-                        }).click(function () {
-                            fn(self.elements.prompt.find(".prompt").val(), parseFloat(time_input.val()));
-                            self.elements.prompt.fadeOut(200);
-                        })
+                        $("<div>").addClass("buttons").append(
+                            genButton("Cancel").click(function () {
+                                self.elements.prompt.fadeOut(200);
+                            }),
+                            genButton("OK").click(function () {
+                                var selectedRule = self.elements.prompt.find("select").val();
+                                var textarea = self.elements.prompt.find("textarea").val().trim();
+                                var msg = selectedRule;
+                                if (selectedRule === "other") {
+                                    if (textarea === "") {
+                                        alert.show("You must specify the details.");
+                                        return;
+                                    }
+                                    msg = textarea;
+                                } else if (textarea !== "") {
+                                    msg += "; additional information: " + textarea;
+                                }
+                                fn(msg, parseFloat(time_input.val()));
+                                self.elements.prompt.fadeOut(200);
+                            })
+                        )
                     ).fadeIn(200);
                 },
                 ban_internal: function (username, fn, msg, done_msg, path, time) {
@@ -81,26 +100,33 @@
                             if (fn) {
                                 fn();
                             }
+                        }).fail(function () {
+                            admin.alert.show("Something went wrong! Perhaps insufficient permissions?");
                         });
                     })
                 },
                 shadow: function (username, fn) {
-                    self.ban_internal(username, fn, "Shadowban reason", "Shadowbanned user", "/admin/shadowban");
+                    self.ban_internal(username, fn, "Shadowban user", "Shadowbanned user", "/admin/shadowban");
                 },
                 perma: function (username, fn) {
-                    self.ban_internal(username, fn, "Permaban reason", "Permabanned user", "/admin/permaban");
+                    self.ban_internal(username, fn, "Permaban user", "Permabanned user", "/admin/permaban");
                 },
                 ban: function (username, time, fn) {
-                    self.ban_internal(username, fn, "Ban reason", "Banned user", "/admin/ban", time);
+                    self.ban_internal(username, fn, "Ban user", "Banned user", "/admin/ban", time);
                 },
                 ban_24h: function (username, fn) {
                     self.ban(username, 24*3600, fn);
                 },
-                unban: function (username, fn) {
+                unban: function (username, reason, fn) {
+                    if (typeof reason === 'function') {
+                        reason = '';
+                        fn = reason;
+                    }
                     $.post("/admin/unban", {
-                        username: username
+                        username,
+                        reason
                     }, function () {
-                        admin.alert.show("Unbanned user "+username);
+                        admin.alert.show(`Unbanned user ${username}`);
                         if (fn) {
                             fn();
                         }
@@ -140,7 +166,8 @@
                     check: $("<div>").addClass("admin-check")
                 },
                 callback: function (data) {
-                    var delta = (data.ban_expiry - (new Date()).getTime()) / 1000,
+                    var delta = (data.banExpiry - (new Date()).getTime()) / 1000,
+                        chatbanDelta = (data.chatbanExpiry - (new Date()).getTime()) / 1000,
                         secs = Math.floor(delta % 60),
                         secsStr = secs < 10 ? "0" + secs : secs,
                         minutes = Math.floor((delta / 60)) % 60,
@@ -149,7 +176,10 @@
                         hoursStr = hours < 10 ? "0" + hours : hours,
                         banned = data.banned,
                         bannedStr = "",
-                        expiracyStr = hoursStr+":"+minuteStr+":"+secsStr;
+                        expiracyStr = hoursStr+":"+minuteStr+":"+secsStr,
+                        chatbannedStr = "",
+                        chabannedExpiracyStr = `${chatbanDelta >> 0}s`;
+                        // chabannedExpiracyStr = `${(chatbanDelta/3600) >> 0}h ${((chatbanDelta/60) >> 0) % 60}m ${(delta % 60) >> 0}s`;
                     if (data.role == "SHADOWBANNED") {
                         bannedStr = "shadow";
                         banned = true;
@@ -161,42 +191,48 @@
                     } else {
                         bannedStr = banned ? "yes" : "no";
                     }
+                    chatbannedStr = data.chatbanIsPerma ? `Yes (permanent)` : (data.chatBanned ? `Yes` : `No`);
                     var items = [
-                        ["Username", data.username],
+                        ["Username", genUserInfoLink(data.username)],
                         ["Login", data.login],
                         ["Role", data.role],
-                        ["Banned", bannedStr]
+                        ["Rename Requested", data.renameRequested ? "Yes" : "No"],
+                        ["Discord Name", data.discordName || "(not set)"],
+                        ["Banned", bannedStr],
+                        ["Chatbanned", chatbannedStr]
                     ];
                     if (banned) {
                         items.push(["Ban Reason", data.ban_reason]);
                         items.push(["Ban Expiracy", expiracyStr]);
                     }
+                    if (data.chatBanned) {
+                        items.push(["Chatban Reason", data.chatbanReason]);
+                        if (!data.isChatbanPerma) {
+                            items.push(["Chatban Expires", chabannedExpiracyStr])
+                        }
+                    }
                     self.elements.check.empty().append(
                         $.map(items, function (o) {
                             return $("<div>").append(
                                 $("<b>").text(o[0]+": "),
-                                $("<span>").text(o[1])
+                                typeof o[1] === "string" ? $("<span>").text(o[1]) : o[1]
                             );
                         }),
-                        sendAlert(data.username),
+                        $("<div>").append(sendAlert(data.username)),
                         $("<div>").append(
                             genButton("Ban (24h)").click(function () {
                                 ban.ban_24h(data.username, function () {
                                     self.elements.check.fadeOut(200);
                                 });
                             }),
-                            genButton("Permaban").click(function () {
+                            (admin.user.getRole() !== "TRIALMOD" ? genButton("Permaban").click(function () {
                                 ban.perma(data.username, function () {
                                     self.elements.check.fadeOut(200);
                                 });
-                            })
+                            }) : "")
                         ),
                         $("<div>").append(
-                            genButton("Unban").click(function () {
-                                ban.unban(data.username, function () {
-                                    self.elements.check.fadeOut(200);
-                                });
-                            }),
+                            genButton("Unban").click(() => self.popUnban(data.username)),
                             (admin.user.getRole() == "ADMIN" ?
                                 genButton("Shadowban").click(function () {
                                     ban.shadow(data.username, function () {
@@ -205,9 +241,20 @@
                                 })
                             : "")
                         ),
+                        crel('div',
+                            crel('button', {'data-action': 'chatban', 'data-target': data.username, 'class': 'button', 'style': 'position: initial; right: auto; left: auto; bottom: auto;', onclick: admin.chat._handleActionClick}, 'Chat (un)ban'),
+                            crel('button', {'data-action': 'purge', 'data-target': data.username, 'class': 'button', 'style': 'position: initial; right: auto; left: auto; bottom: auto;', onclick: admin.chat._handleActionClick}, 'Chat purge')
+                        ),
+                        (admin.user.getRole() !== "TRIALMOD"
+                                ? crel('div',
+                                    crel('button', {'data-action': 'request-rename', 'data-target': data.username, 'class': 'button', 'style': 'position: initial; right: auto; left: auto; bottom: auto;', onclick: admin.chat._handleActionClick}, 'Request Rename'),
+                                    (admin.user.getRole() == "ADMIN" || admin.user.getRole() == "DEVELOPER" ? crel('button', {'data-action': 'force-rename', 'data-target': data.username, 'class': 'button', 'style': 'position: initial; right: auto; left: auto; bottom: auto;', onclick: admin.chat._handleActionClick}, 'Force Rename') : '')
+                                )
+                                : ''
+                        ),
                         $("<div>").append(
                             $("<b>").text("Custom ban length: "), "<br>",
-                            $("<input>").attr("type", "number").addClass("admin-bannumber").val(24),
+                            $("<input>").attr("type", "number").attr("step", "any").addClass("admin-bannumber").val(24),
                             " hours ",
                             genButton("Ban").click(function () {
                                 ban.ban(data.username, parseFloat($(this).parent().find("input").val())*3600, function () {
@@ -215,13 +262,11 @@
                                 });
                             })
                         ),
-                        genButton("Close").css({
-                            position: "fixed",
-                            bottom: 20,
-                            right: 30
-                        }).click(function () {
-                            self.elements.check.fadeOut(200);
-                        })
+                        $("<div>").addClass("buttons").append(
+                            genButton("Close").click(function () {
+                                self.elements.check.fadeOut(200);
+                            })
+                        )
                     ).fadeIn(200);
                 },
                 init: function () {
@@ -236,12 +281,39 @@
                     }, self.callback).fail(function () {
                         admin.alert.show("User "+username+" not found");
                     });
+                },
+                popUnban: username => {
+                    let btnSubmit = crel('button', {'type': 'submit', 'class': 'button'}, 'Unban');
+                    let txtUnbanReason = crel('input', {'type': 'text', 'required': 'true'});
+                    let lblUnbanReason = crel('label', 'Unban Reason: ', txtUnbanReason);
+
+                    txtUnbanReason.addEventListener('keydown', e => e.stopPropagation());
+
+                    let unbanWrapper = crel('form', {'class': 'chatmod-container'},
+                        crel('h3', 'Unban User'),
+                        crel('p', `Unbanning ${username}`),
+                        lblUnbanReason,
+                        crel('div', {'class': 'buttons'},
+                            crel('button', {'class': 'button', 'type': 'button', onclick: () => {admin.alert.hide(); unbanWrapper.remove();} }, 'Cancel'),
+                            btnSubmit
+                        )
+                    );
+
+                    unbanWrapper.onsubmit = e => {
+                        e.preventDefault();
+                        ban.unban(username, txtUnbanReason.value, function() {
+                            self.elements.check.fadeOut(200);
+                        });
+                    };
+
+                    admin.alert.show(unbanWrapper, true);
                 }
             };
             return {
                 init: self.init,
                 deinit: self.deinit,
-                check: self.check
+                check: self.check,
+                popUnban: self.popUnban
             };
         })(),
         panel = (function() {
@@ -250,23 +322,39 @@
                     panel: $("<div>")
                 },
                 init: function () {
-                    self.elements.panel.hide().addClass("admin panel").append(
+                    self.elements.panel.hide().addClass("admin").append(
                         $("<h1>").text("MOD"),
                         $("<div>").append(
                             // first do the checkboxes
-                            $.map([["Disable hand reset", function () {
-                                admin.place.setAutoReset(!this.checked);
-                            }], ["Override cooldown", function () {
-                                admin.socket.send({type: "admin_cdoverride", override: this.checked});
-                            }]], function (o) {
-                                return $("<label>").text(o[0]).append(
-                                    $("<input>").attr("type", "checkbox").change(o[1])
-                                )
-                            }),
+                            $.map(
+                                [
+                                    {
+                                        text: "Disable hand reset",
+                                        onChange: function() {
+                                            admin.place.setAutoReset(!this.checked);
+                                        },
+                                        checkState: false,
+                                        disabled: false
+                                    },
+                                    {
+                                        text: "Override cooldown",
+                                        onChange: function() {
+                                            admin.socket.send({type: "admin_cdoverride", override: this.checked});
+                                        },
+                                        checkState: admin.cdOverride,
+                                        disabled: admin.user.getRole() === "TRIALMOD"
+                                    }
+                                ],
+                                function(cbox) {
+                                    return $("<label>").text(cbox.text).append(
+                                        $("<input>").attr("type", "checkbox").prop("checked", !!cbox.checkState).prop("disabled", !!cbox.disabled).change(cbox.onChange)
+                                    )
+                                }
+                            ),
                             // next do the text input
                             $.map([
                                 ["Ban user (24h)", ban.ban_24h],
-                                ["Unban user", ban.unban],
+                                ["Unban user", checkUser.popUnban],
                                 ["Check user", checkUser.check]
                             ], function (o) {
                                 return $("<input>").attr({
@@ -295,58 +383,61 @@
         lookup = (function() {
             var self = {
                 elements: {
-                    lookup: $("<div>").addClass("admin-lookup")
+                    lookup: $("#lookup")
                 },
-                create: function (data) {
-                    data.coords = "(" + data.x + ", " + data.y + ")";
-                    data.time = (new Date(data.time)).toLocaleString()
-                    self.elements.lookup.empty().append(
-                        $.map([
-                            ["Coords", "coords"],
-                            ["Username", "username"],
-                            ["Login", "login"],
-                            ["Time", "time"]
-                        ], function (o) {
-                            return $("<div>").append(
-                                $("<b>").text(o[0]+": "),
-                                $("<span>").text(data[o[1]])
-                            );
-                        }),
-                        sendAlert(data.username),
-                        $("<div>").append(
-                            genButton("Ban (24h)").click(function () {
-                                ban.ban_24h(data.username, function () {
-                                    self.elements.lookup.fadeOut(200);
-                                });
-                            }),
-                            genButton("More...").click(function () {
-                                checkUser.check(data.username);
-                                self.elements.lookup.fadeOut(200);
-                            }),
-                            genButton("Close").click(function () {
-                                self.elements.lookup.fadeOut(200);
-                            })
-                        )
-                    ).fadeIn(200);
-                },
-                event: function (evt) {
-                    if (evt.shiftKey) {
-                        var pos = admin.board.fromScreen(evt.clientX, evt.clientY);
-
-                        $.get("/lookup", {x: Math.floor(pos.x), y: Math.floor(pos.y)}, function (data) {
-                            if (data) {
-                                self.create(data);
-                            }
-                        });
-                    }
-                },
+                /**
+                 * Register hooks for admin-specific lookups.
+                 */
                 init: function () {
-                    self.elements.lookup.hide().appendTo(document.body);
-                    admin.board.getRenderBoard().on("click", self.event);
+                    App.lookup.replaceHook("username", {
+                        get: data => genUserInfoLink(data.username)
+                    });
+                    App.lookup.registerHook({
+                        id: "login",
+						name: "Login",
+						sensitive: true,
+						get: data => {
+                            var addMonoClass = localStorage.getItem("monospace_lookup") === "true" ? " useMono" : ""
+                            return $("<div class=\"monoVal" + addMonoClass + "\">").text(data.login)
+                        }
+                    }, {
+                        id: "user_agent",
+						name: "User Agent",
+						sensitive: true,
+						get: data => {
+                            var addMonoClass = localStorage.getItem("monospace_lookup") === "true" ? " useMono" : ""
+                            return $("<div class=\"monoVal" + addMonoClass + "\">").text(data.userAgent)
+                        }
+                    }, {
+						id: "alert",
+						name: "Send Alert",
+						sensitive: true,
+						get: data => sendAlert(data.username),
+					}, {
+                        id: "admin_actions",
+                        name: "Mod Actions",
+                        sensitive: true,
+                        get: data => $("<span>").append(
+							genButton("Ban (24h)").click(() => {
+								ban.ban_24h(data.username, function () {
+									self.elements.lookup.fadeOut(200);
+								});
+							}),
+							genButton("More...").click(() => {
+								checkUser.check(data.username);
+								self.elements.lookup.fadeOut(200);
+							}),
+						),
+                    });
                 },
+                /**
+                 * Unregister hooks for admin-specific lookups.
+                 */
                 deinit: function () {
-                    self.elements.lookup.remove();
-                    admin.board.getRenderBoard().off("click", self.event);
+                    App.lookup.unregisterHook("login");
+                    App.lookup.unregisterHook("user_agent");
+                    App.lookup.unregisterHook("day_ban");
+                    App.lookup.unregisterHook("more");
                 }
             };
             return {
@@ -354,13 +445,16 @@
                 deinit: self.deinit
             };
         })();
-    window.initAdmin = function (_admin) {
+    window.initAdmin = function (_admin, cb) {
         admin = _admin;
         ban.init();
         style.init();
         checkUser.init();
         panel.init();
         lookup.init();
+        if (cb && (typeof cb === "function")) {
+            cb({ban, style, checkUser, panel, lookup});
+        }
     };
     window.deInitAdmin = function () {
         ban.deinit();

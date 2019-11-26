@@ -1,0 +1,291 @@
+/* TODO: Add sections, like in style.css */
+
+html, body {
+    background-color: #222;
+}
+
+kbd {
+    border: 1px solid #333;
+    background-color: #444;
+    color: #fff;
+}
+
+.message {
+    background-color: #333;
+    color: #eee;
+}
+
+.message select, .message textarea, .message input {
+    border: 2px solid #333;
+    background-color: #222;
+    color: #eee;
+}
+
+.button {
+    background-color: #bbb;
+}
+
+.button:hover {
+    border: 1px solid #844;
+}
+
+#lookup {
+    border: 1px solid #222;
+    background-color: #333;
+}
+
+#lookup .content {
+    color: #eee;
+}
+
+#lookup .content input {
+    border: 1px solid #333;
+    background-color: #222;
+    color: #eee;
+}
+
+#lookup .report-button {
+    border: 1px solid #333;
+}
+
+.drawer button {
+    border: 2px solid #333;
+    background-color: #555;
+    color: #eee;
+}
+
+.drawer select {
+    border: 2px solid #333;
+    background-color: #222;
+    color: #eee;
+}
+
+.palette-overlay {
+    background-color: rgba(0, 0, 0, 0.9);
+    color: #eee;
+}
+
+#palette {
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+.palette-color.deselect-button {
+    color: #DDD;
+}
+
+#undo {
+    background-image: linear-gradient(to top, #0000007F, #000);
+    color: #fff;
+}
+
+input[type="text"], textarea {
+    border: 1px solid #333;
+    background-color: #222;
+    color: #eee;
+}
+
+/* Text Colors */
+
+.text-red {
+    color: #f44;
+}
+
+.text-yellow {
+    color: #cc0;
+}
+
+/* Panels */
+
+header {
+    background-image: linear-gradient(to bottom, #444, #333);
+}
+
+aside.panel {
+    background-color: #333;
+    color: #eee;
+}
+
+/* Chat */
+
+ul.chat-body li.chat-line {
+    border-bottom: 1px solid #4f4f4f;
+}
+
+ul.chat-body li.chat-line:nth-child(odd) {
+    background-color: #3f3f3f;
+}
+
+ul.chat-body li.chat-line.server-action {
+    color: #9f9f9f;
+}
+
+.popup {
+    background-color: #333;
+    color: #ccc;
+}
+
+hr {
+    border: none;
+    border-top: 1px solid #000;
+}
+
+.pane .chat-timestamp-header {
+    color: #666;
+}
+
+.pane ul.actions-list li[data-action] {
+    background-image: linear-gradient(0,#333,#3f3f3f,#333);
+}
+
+.pane ul.actions-list li[data-action]:hover {
+    background-image: linear-gradient(0,#2a2a2a,#3a3a3a,#2a2a2a);
+}
+
+ul.chat-body .chat-line[data-nonce].has-ping {
+    background-color: #5b5345;
+}
+
+li.chat-line .user {
+    text-shadow: 1px 1px 0 #333, -1px 1px 0 #333, 1px -1px 0 #333, -1px -1px 0 #333, 0 1px 0 #333, 0 -1px 0 #333, -1px 0 0 #333, 1px 0 0 #333;
+}
+
+@keyframes -scrolled-flash {
+    from {
+        background-color: #5b5345;
+    }
+    to {
+        background-color: #58a78a;
+    }
+}
+
+.emoji-picker {
+    border: 1px solid #515151;
+    box-shadow: 0px 0px 3px 1px #1f1f1f;
+    background: #333333;
+}
+
+.emoji-picker__preview {
+    border-top: 1px solid #515151;
+}
+
+.emoji-picker__preview-name {
+    color: #ccc;
+}
+
+.emoji-picker__tab {
+    color: #ccc;
+}
+
+.emoji-picker__tab.active {
+    border-bottom: 3px solid #6fd1ff;
+    color: #6fd1ff;
+}
+
+.emoji-picker__tab-body h2 {
+    color: #ccc;
+}
+
+.emoji-picker__emojis.search-results {
+    height: 21rem;
+}
+
+.emoji-picker__emoji {
+    background: transparent;
+    color: white;
+}
+
+.emoji-picker__emoji:hover {
+    background: #656565;
+}
+
+.emoji-picker__search-container input {
+    border: 1px solid #333;
+    background-color: #222;
+    color: #ddd;
+}
+
+.emoji-picker__search-icon {
+    color: #aaa;
+}
+
+.emoji-picker__search-not-found {
+    color: #666666;
+}
+
+.emoji-picker__variant-overlay {
+    background: rgba(0, 0, 0, 0.7);
+}
+
+.emoji-picker__variant-popup {
+    background: #FFFFFF;
+}
+
+.emoji-picker__variant-popup-close-button {
+    background: transparent;
+}
+
+#typeahead {
+    background-color: #1d1d1d;
+}
+#typeahead ul li {
+    background-color: #2c2c2c;
+}
+
+#typeahead ul li:hover {
+    background-color: #3b3b3b;
+}
+
+#typeahead ul li.active {
+    background-color: #595959;
+}
+
+/* Admin */
+
+.admin input {
+    border: 1px solid #333;
+    background-color: #222;
+}
+
+.admin-check {
+    border: 1px solid #222 !important;
+    background-color: #333 !important;
+}
+
+.admin-check div:not(.button) {
+    color: #eee;
+}
+
+.admin-check input {
+    border: 1px solid #333;
+    background-color: #222;
+    color: #eee;
+}
+
+/* Notifications */
+.notification {
+    background-color: #3d3d3d;
+    border: 1px solid #111111;
+}
+
+.notification .notification-title {
+    background-color: #292929;
+    border-bottom: 1px solid #111111;
+}
+
+.notification .notification-footer {
+    color: #666;
+    background-color: #2e2e2e;
+    border-top: 1px solid #111111;
+}
+
+.notification-footer .notification-expiry {
+    color: #995050;
+}
+
+/* Mobile */
+
+@media (max-width: 768px) {
+    .drawer-content > div:not(.close) {
+        border: 1px solid #444;
+    }
+}

@@ -2,53 +2,48 @@ package space.pxls.util;
 
 import io.undertow.server.HttpHandler;
 import io.undertow.server.HttpServerExchange;
+import io.undertow.server.handlers.Cookie;
 import io.undertow.server.handlers.RedirectHandler;
 import io.undertow.server.handlers.ResponseCodeHandler;
 import io.undertow.util.StatusCodes;
+import space.pxls.App;
+import space.pxls.user.Role;
+import space.pxls.user.User;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class RateLimitingHandler implements HttpHandler {
     private HttpHandler next;
-    private Map<String, RequestBucket> buckets = new ConcurrentHashMap<>();
-    private int time;
-    private int count;
+    private String bucketType;
 
-    public RateLimitingHandler(HttpHandler next, int time, int count) {
+    public RateLimitingHandler(HttpHandler next, Class bucketType, int time, int count) {
+        this(next, bucketType.getSimpleName(), time, count);
+    }
+    public RateLimitingHandler(HttpHandler next, String bucketType, int time, int count) {
+        this.bucketType = bucketType;
         this.next = next;
-        this.time = time;
-        this.count = count;
+        RateLimitFactory.registerBucketHolder(bucketType, new RateLimitFactory.BucketConfig(time, count));
     }
 
     @Override
     public void handleRequest(HttpServerExchange exchange) throws Exception {
         String ip = exchange.getAttachment(IPReader.IP);
+        Cookie header = exchange.getRequestCookies().get("pxls-token");
+        if (header != null) {
+            User user = App.getUserManager().getByToken(header.getValue());
+            if (user != null && user.getRole().greaterEqual(Role.TRIALMOD)) {
+                next.handleRequest(exchange);
+                return;
+            }
+        }
 
-        RequestBucket bucket = buckets.<String, RequestBucket>compute(ip, (key, old) -> {
-            if (old == null) return new RequestBucket(System.currentTimeMillis(), 0);
-            if (old.startTime + time * 1000 < System.currentTimeMillis())
-                return new RequestBucket(System.currentTimeMillis(), 0);
-            return old;
-        });
-        bucket.count++;
-        if (bucket.count > count)
-        {
-            int timeSeconds = (int) ((bucket.startTime + time * 1000) - System.currentTimeMillis()) / 1000;
+        int seconds = RateLimitFactory.getTimeRemaining(bucketType, ip);
+        if (seconds > 0) {
             exchange.setStatusCode(StatusCodes.TOO_MANY_REQUESTS);
-            exchange.getResponseSender().send("You are doing that too much, try again in " + timeSeconds / 60 + " minutes");
+            exchange.getResponseSender().send(String.format("You're doing that too much. Try again in %d seconds.", seconds));
         } else {
             next.handleRequest(exchange);
-        }
-    }
-
-    public static class RequestBucket {
-        public long startTime;
-        public int count;
-
-        public RequestBucket(long startTime, int count) {
-            this.startTime = startTime;
-            this.count = count;
         }
     }
 }

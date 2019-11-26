@@ -6,33 +6,35 @@ import io.undertow.Undertow;
 import io.undertow.server.handlers.PathHandler;
 import io.undertow.server.handlers.form.EagerFormParsingHandler;
 import io.undertow.server.handlers.resource.ClassPathResourceManager;
+import io.undertow.util.Headers;
 import io.undertow.websockets.core.AbstractReceiveListener;
 import io.undertow.websockets.core.BufferedTextMessage;
 import io.undertow.websockets.core.WebSocketChannel;
 import io.undertow.websockets.core.WebSockets;
 import io.undertow.websockets.spi.WebSocketHttpExchange;
 import space.pxls.App;
+import space.pxls.tasks.UserAuthedTask;
 import space.pxls.user.Role;
 import space.pxls.user.User;
-import space.pxls.util.AuthReader;
-import space.pxls.util.IPReader;
-import space.pxls.util.RateLimitingHandler;
-import space.pxls.util.RoleGate;
-import space.pxls.user.UserManager;
-import space.pxls.user.User;
-import space.pxls.user.Role;
+import space.pxls.util.*;
 
 import java.io.IOException;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.Map;
 
 public class UndertowServer {
     private int port;
     private PacketHandler socketHandler;
     private WebHandler webHandler;
+    private ConcurrentHashMap<Integer, User> authedUsers = new ConcurrentHashMap<Integer, User>();
 
     private Set<WebSocketChannel> connections;
+    private Undertow server;
+
+    private ExecutorService userTaskExecutor = Executors.newFixedThreadPool(4);
 
     public UndertowServer(int port) {
         this.port = port;
@@ -43,25 +45,47 @@ public class UndertowServer {
 
     public void start() {
         PathHandler mainHandler = Handlers.path()
+                .addExactPath("/ws", Handlers.websocket(this::webSocketHandler))
                 .addPrefixPath("/ws", Handlers.websocket(this::webSocketHandler))
                 .addPrefixPath("/info", webHandler::info)
                 .addPrefixPath("/boarddata", webHandler::data)
+                .addPrefixPath("/heatmap", webHandler::heatmap)
+                .addPrefixPath("/virginmap", webHandler::virginmap)
+                .addPrefixPath("/placemap", webHandler::placemap)
                 .addPrefixPath("/logout", webHandler::logout)
-                .addPrefixPath("/lookup", webHandler::lookup)
+                .addPrefixPath("/lookup", new RateLimitingHandler(webHandler::lookup, "http:lookup", (int) App.getConfig().getDuration("server.limits.lookup.time", TimeUnit.SECONDS), App.getConfig().getInt("server.limits.lookup.count")))
+                .addPrefixPath("/report", new RoleGate(Role.USER, webHandler::report))
+                .addPrefixPath("/reportChat", new RoleGate(Role.USER, webHandler::chatReport))
                 .addPrefixPath("/signin", webHandler::signIn)
-                .addPrefixPath("/auth", new RateLimitingHandler(webHandler::auth, (int) App.getConfig().getDuration("server.limits.auth.time", TimeUnit.SECONDS), App.getConfig().getInt("server.limits.auth.count")))
-                .addPrefixPath("/signup/do", new RateLimitingHandler(webHandler::signUp, (int) App.getConfig().getDuration("server.limits.signup.time", TimeUnit.SECONDS), App.getConfig().getInt("server.limits.signup.count")))
-                .addPrefixPath("/admin/ban", new RoleGate(Role.MODERATOR, webHandler::ban))
-                .addPrefixPath("/admin/unban", new RoleGate(Role.MODERATOR, webHandler::unban))
+                .addPrefixPath("/users", webHandler::users)
+                .addPrefixPath("/auth", new RateLimitingHandler(webHandler::auth, "http:auth", (int) App.getConfig().getDuration("server.limits.auth.time", TimeUnit.SECONDS), App.getConfig().getInt("server.limits.auth.count")))
+                .addPrefixPath("/signup", new RateLimitingHandler(webHandler::signUp, "http:signUp", (int) App.getConfig().getDuration("server.limits.signup.time", TimeUnit.SECONDS), App.getConfig().getInt("server.limits.signup.count")))
+                .addPrefixPath("/setDiscordName", new RateLimitingHandler(webHandler::discordNameChange, "http:discordName", (int) App.getConfig().getDuration("server.limits.discordNameChange.time", TimeUnit.SECONDS), App.getConfig().getInt("server.limits.discordNameChange.count")))
+                .addPrefixPath("/setDiscordName", webHandler::discordNameChange)
+                .addPrefixPath("/admin/ban", new RoleGate(Role.TRIALMOD, webHandler::ban))
+                .addPrefixPath("/admin/unban", new RoleGate(Role.TRIALMOD, webHandler::unban))
                 .addPrefixPath("/admin/permaban", new RoleGate(Role.MODERATOR, webHandler::permaban))
-                .addPrefixPath("/admin/shadowban", new RoleGate(Role.ADMIN, webHandler::shadowban))
-                .addPrefixPath("/admin/check", new RoleGate(Role.MODERATOR, webHandler::check))
-                .addPrefixPath("/admin", new RoleGate(Role.MODERATOR, Handlers.resource(new ClassPathResourceManager(App.class.getClassLoader(), "public/admin/"))
+                .addPrefixPath("/admin/shadowban", new RoleGate(Role.DEVELOPER, webHandler::shadowban))
+                .addPrefixPath("/admin/check", new RoleGate(Role.TRIALMOD, webHandler::check))
+                .addPrefixPath("/admin/chatban", new RoleGate(Role.TRIALMOD, webHandler::chatban))
+                .addPrefixPath("/admin/delete", new RoleGate(Role.TRIALMOD, webHandler::deleteChatMessage))
+                .addPrefixPath("/admin/chatPurge", new RoleGate(Role.TRIALMOD, webHandler::chatPurge))
+                .addPrefixPath("/execNameChange", new RoleGate(Role.USER, webHandler::execNameChange))
+                .addPrefixPath("/admin/flagNameChange", new RoleGate(Role.MODERATOR, webHandler::flagNameChange))
+                .addPrefixPath("/admin/forceNameChange", new RoleGate(Role.DEVELOPER, webHandler::forceNameChange))
+                .addPrefixPath("/admin", new RoleGate(Role.TRIALMOD, Handlers.resource(new ClassPathResourceManager(App.class.getClassLoader(), "public/admin/"))
                         .setCacheTime(10)))
+                .addPrefixPath("/whoami", webHandler::whoami)
+                .addPrefixPath("/createNotification", new RoleGate(Role.DEVELOPER, webHandler::createNotification))
+                .addPrefixPath("/sendNotificationToDiscord", new RoleGate(Role.DEVELOPER, webHandler::sendNotificationToDiscord))
+                .addPrefixPath("/setNotificationExpired", new RoleGate(Role.DEVELOPER, webHandler::setNotificationExpired))
+                .addPrefixPath("/notifications", webHandler::notificationsList)
+                .addExactPath("/", webHandler::index)
+                .addExactPath("/index.html", webHandler::index)
                 .addPrefixPath("/", Handlers.resource(new ClassPathResourceManager(App.class.getClassLoader(), "public/"))
                         .setCacheTime(10));
         //EncodingHandler encoder = new EncodingHandler(mainHandler, new ContentEncodingRepository().addEncodingHandler("gzip", new GzipEncodingProvider(), 50, Predicates.parse("max-content-size(1024)")));
-        Undertow server = Undertow.builder()
+        server = Undertow.builder()
                 .addHttpListener(port, "0.0.0.0")
                 .setIoThreads(32)
                 .setWorkerThreads(128)
@@ -79,6 +103,19 @@ public class UndertowServer {
 
         if (user != null) {
             user.getConnections().add(channel);
+            
+            // aaaaaaand update the useragent
+            List<String> agentAr = exchange.getRequestHeaders().get(Headers.USER_AGENT.toString());
+            String agent = "";
+            if (agentAr != null) {
+                agent = agentAr.get(0);
+            }
+            if (agent == null) {
+                agent = "";
+            }
+            user.setUserAgent(agent);
+
+            userTaskExecutor.submit(new UserAuthedTask(channel, user, ip)); //ip at this point should have gone through all the checks to extract an actual IP from behind a reverse proxy
         }
 
         channel.getReceiveSetter().set(new AbstractReceiveListener() {
@@ -92,17 +129,25 @@ public class UndertowServer {
                 String type = jsonObj.get("type").getAsString();
 
                 Object obj = null;
-                if (type.equals("place")) obj = App.getGson().fromJson(jsonObj, Packet.ClientPlace.class);
-                if (type.equals("captcha")) obj = App.getGson().fromJson(jsonObj, Packet.ClientCaptcha.class);
+                if (type.equals("pixel")) obj = App.getGson().fromJson(jsonObj, ClientPlace.class);
+                if (type.equals("undo")) obj = App.getGson().fromJson(jsonObj, ClientUndo.class);
+                if (type.equals("captcha")) obj = App.getGson().fromJson(jsonObj, ClientCaptcha.class);
                 if (type.equals("admin_cdoverride"))
-                    obj = App.getGson().fromJson(jsonObj, Packet.ClientAdminCooldownOverride.class);
+                    obj = App.getGson().fromJson(jsonObj, ClientAdminCooldownOverride.class);
                 if (type.equals("admin_message"))
-                    obj = App.getGson().fromJson(jsonObj, Packet.ClientAdminMessage.class);
-                if (type.equals("shadowbanme")) obj = App.getGson().fromJson(jsonObj, Packet.ClientShadowBanMe.class);
-                if (type.equals("banme")) obj = App.getGson().fromJson(jsonObj, Packet.ClientBanMe.class);
+                    obj = App.getGson().fromJson(jsonObj, ClientAdminMessage.class);
+                if (type.equals("shadowbanme")) obj = App.getGson().fromJson(jsonObj, ClientShadowBanMe.class);
+                if (type.equals("banme")) obj = App.getGson().fromJson(jsonObj, ClientBanMe.class);
+                if (type.equalsIgnoreCase("ChatHistory")) obj = App.getGson().fromJson(jsonObj, ClientChatHistory.class);
+                if (type.equalsIgnoreCase("ChatbanState")) obj = App.getGson().fromJson(jsonObj, ClientChatbanState.class);
+                if (type.equalsIgnoreCase("ChatMessage")) obj = App.getGson().fromJson(jsonObj, ClientChatMessage.class);
+                if (type.equalsIgnoreCase("UserUpdate")) obj = App.getGson().fromJson(jsonObj, ClientUserUpdate.class);
 
+                // old thing, will auto-shadowban
+                if (type.equals("place")) obj = App.getGson().fromJson(jsonObj, ClientPlace.class);
+                
                 // lol
-                if (type.equals("placepixel")) obj = App.getGson().fromJson(jsonObj, Packet.ClientBanMe.class);
+                if (type.equals("placepixel")) obj = App.getGson().fromJson(jsonObj, ClientBanMe.class);
 
                 if (obj != null) {
                     socketHandler.accept(channel, user, obj, ip);
@@ -123,28 +168,41 @@ public class UndertowServer {
         sendRaw(channel, App.getGson().toJson(obj));
     }
 
+    public void send(User user, Object obj) {
+        for (WebSocketChannel connection : user.getConnections()) {
+            send(connection, obj);
+        }
+    }
+
     public Set<WebSocketChannel> getConnections() {
         return connections;
     }
 
     public void broadcast(Object obj) {
         String json = App.getGson().toJson(obj);
-        for (WebSocketChannel channel : connections) {
-            sendRaw(channel, json);
+        if (connections != null) {
+            for (WebSocketChannel channel : connections) {
+                sendRaw(channel, json);
+            }
         }
     }
 
-    public void broadcast_noshadow(Object obj) {
+    public void broadcastNoShadow(Object obj) {
         String json = App.getGson().toJson(obj);
         Map<String, User> users = App.getUserManager().getAllUsersByToken();
+        List<WebSocketChannel> shadowbannedConnection = new ArrayList<>();
         for (User u : users.values()) {
-            if (u.getRole() != Role.SHADOWBANNED) {
-                for (WebSocketChannel channel : u.getConnections()) {
+            if (u.getRole() == Role.SHADOWBANNED) {
+                shadowbannedConnection.addAll(u.getConnections());
+            }
+        }
+        if (connections != null) {
+            for (WebSocketChannel channel : connections){
+                if (!shadowbannedConnection.contains(channel)){
                     sendRaw(channel, json);
                 }
             }
         }
-        
     }
 
     private void sendRaw(WebSocketChannel channel, String str) {
@@ -153,5 +211,31 @@ public class UndertowServer {
 
     public PacketHandler getPacketHandler() {
         return socketHandler;
+    }
+
+    public void addAuthedUser(User user) {
+        if (!authedUsers.containsKey(user.getId()) && !user.isBanned() && !user.isShadowBanned()) {
+            authedUsers.put(user.getId(), user);
+        }
+    }
+
+    public void removeAuthedUser(User user) {
+        authedUsers.remove(user.getId());
+    }
+
+    public ConcurrentHashMap<Integer, User> getAuthedUsers() {
+        return this.authedUsers;
+    }
+
+    public int getNonIdledUsersCount() {
+        int nonIdles = 0;
+        for (User value : App.getServer().getAuthedUsers().values()) {
+            if (!value.isIdled()) ++nonIdles;
+        }
+        return nonIdles;
+    }
+
+    public Undertow getServer() {
+        return server;
     }
 }
